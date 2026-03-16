@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Непредсказуемый проект | Digital Life Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="card topbar">
+        <div>
+          <p class="eyebrow">digital evolution laboratory</p>
+          <h1>Непредсказуемый проект</h1>
+          <p>Байтовые организмы, эволюция поведения, паразиты, кооперация, вымирания</p>
+        </div>
+        <div class="actions">
+          <button id="toggleRun" class="btn primary">Пауза</button>
+          <button id="stepOnce" class="btn">Шаг</button>
+          <button id="burst" class="btn">Мутационный всплеск</button>
+          <button id="saveState" class="btn">Сохранить</button>
+          <label class="btn file-btn">Загрузить
+            <input id="loadState" type="file" accept="application/json" />
+          </label>
+        </div>
+      </header>
+
+      <section class="layout">
+        <article class="card arena-card">
+          <div class="panel-head">
+            <h2>Основной мир</h2>
+            <span id="tickLabel" class="tag">тик 0</span>
+          </div>
+          <canvas id="arena" width="960" height="480"></canvas>
+          <div class="legend-row">
+            <span><i class="swatch normal"></i>обычные</span>
+            <span><i class="swatch parasite"></i>паразиты</span>
+            <span><i class="swatch coop"></i>кооперация</span>
+            <span><i class="swatch biome"></i>теплокарта ресурсов (клавиша H)</span>
+          </div>
+        </article>
+
+        <aside class="side-col">
+          <article class="card controls-card">
+            <h2>Сценарии и параметры</h2>
+            <div class="control-grid">
+              <label>Пресет
+                <select id="presetSelect">
+                  <option value="balanced">Сбалансированный</option>
+                  <option value="parasite_world">Мир паразитов</option>
+                  <option value="cooperation_world">Мир кооперации</option>
+                  <option value="memory_crunch">Жесткий дефицит памяти</option>
+                </select>
+              </label>
+              <label>Seed
+                <input id="seedInput" type="number" value="42" />
+              </label>
+              <label>batch/tick
+                <input id="batchInput" type="range" min="1" max="24" value="2" />
+              </label>
+              <label>mutation
+                <input id="mutationInput" type="range" min="0.01" max="0.2" step="0.005" value="0.05" />
+              </label>
+              <label>parasite
+                <input id="parasiteInput" type="range" min="0" max="0.03" step="0.001" value="0.003" />
+              </label>
+              <label>cooperation
+                <input id="coopInput" type="range" min="0" max="0.03" step="0.001" value="0.005" />
+              </label>
+              <label>catastrophe
+                <input id="catInput" type="range" min="0" max="0.02" step="0.0005" value="0.0016" />
+              </label>
+              <label>memory
+                <input id="memInput" type="range" min="0.4" max="0.95" step="0.01" value="0.82" />
+              </label>
+            </div>
+            <div class="actions compact">
+              <button id="applyConfig" class="btn">Применить</button>
+              <button id="resetWorld" class="btn">Перезапуск</button>
+            </div>
+          </article>
+
+          <article class="card stats-card">
+            <div class="panel-head">
+              <h2>Метрики</h2>
+              <span id="eventRate" class="tag">0 / мин</span>
+            </div>
+            <div id="stats" class="stats"></div>
+          </article>
+
+          <article class="card world-log-card">
+            <div class="panel-head">
+              <h2>Хроники мира</h2>
+            </div>
+            <div id="worldLog" class="world-log"></div>
+          </article>
+
+          <article class="card events-card">
+            <div class="panel-head">
+              <h2>Таймлайн</h2>
+              <span id="domFamily" class="tag">клан: -</span>
+            </div>
+            <ul id="events" class="events"></ul>
+          </article>
+        </aside>
+      </section>
+
+      <section class="layout secondary">
+        <article class="card">
+          <h2>История популяции</h2>
+          <canvas id="history" width="960" height="180"></canvas>
+          <label class="replay">Реплей
+            <input id="replaySlider" type="range" min="0" max="0" value="0" />
+          </label>
+        </article>
+
+        <article class="card charts-card">
+          <h2>Причины смерти</h2>
+          <canvas id="deathChart" width="420" height="180"></canvas>
+          <h2>Scatter по признакам</h2>
+          <canvas id="traitChart" width="420" height="180"></canvas>
+        </article>
+
+        <article class="card phylo-card">
+          <h2>Филогенетика</h2>
+          <canvas id="phylo" width="420" height="180"></canvas>
+          <h2>Дуэль миров</h2>
+          <canvas id="arenaDuel" width="420" height="180"></canvas>
+          <div class="actions compact">
+            <button id="duelStart" class="btn">Старт дуэли</button>
+            <button id="duelStop" class="btn">Стоп дуэли</button>
+          </div>
+          <p id="duelStatus" class="tiny">дуэль не запущена</p>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
