@@ -307,6 +307,7 @@ export function createWorld(config = {}, seed = Date.now()) {
     speciesEdges: [],
     memoryLimit: Math.floor(cfg.width * cfg.height * cfg.memoryMultiplier),
     pheromones: new Float32Array(cfg.width * cfg.height),
+    viruses: [],
     ...makeBiomeMap(cfg, rng),
   };
   placeInitialPopulation(state);
@@ -420,7 +421,7 @@ function updatePheromones(state) {
 }
 
 function executeOpcode(state, org, map, occupied) {
-  const code = org.genome[org.ip % org.genome.length] % 8;
+  const code = org.genome[org.ip % org.genome.length] % 12; // Увеличиваем диапазон опкодов
   org.ip = (org.ip + 1) % org.genome.length;
 
   if (code === 0) {
@@ -520,6 +521,18 @@ function executeOpcode(state, org, map, occupied) {
     const idx = mapKey(state, org.x, org.y);
     state.pheromones[idx] = Math.min(10, state.pheromones[idx] + 2.5);
     org.energy -= 0.15;
+  } else if (code === 10) {
+    // Вирусная репликация (Viral Replication)
+    if (org.energy > 8) {
+      org.energy -= 4.5;
+      state.viruses.push({
+        x: org.x,
+        y: org.y,
+        genome: new Uint8Array([10, ri(state.rng, 0, 255), ri(state.rng, 0, 255)]), // Вирусный ген
+        life: 180
+      });
+      if (state.rng() < 0.05) addEvent(state, "virus", `Вирус реплицирован кланом ${org.family}`);
+    }
   } else {
     org.energy += 0.12;
   }
@@ -595,7 +608,52 @@ function applySystemEvents(state) {
     addEvent(state, "extinct", `Вымирание: -${lost}`);
   }
 
+  if (state.rng() < 0.0018) { // Спонтанный вирус
+    state.viruses.push({
+      x: ri(state.rng, 0, state.config.width - 1),
+      y: ri(state.rng, 0, state.config.height - 1),
+      genome: new Uint8Array([10, 0, 0]),
+      life: 250
+    });
+    addEvent(state, "virus", "Обнаружена вирусная аномалия");
+  }
+
   if (state.mutationBoost > 0) state.mutationBoost = Math.max(0, state.mutationBoost - 0.0005);
+}
+
+function updateViruses(state, occupied) {
+  for (let i = state.viruses.length - 1; i >= 0; i--) {
+    const v = state.viruses[i];
+    v.life--;
+    if (v.life <= 0) {
+      state.viruses.splice(i, 1);
+      continue;
+    }
+
+    // Случайное движение вируса
+    if (state.rng() < 0.6) {
+      v.x = clamp(v.x + ri(state.rng, -1, 1), 0, state.config.width - 1);
+      v.y = clamp(v.y + ri(state.rng, -1, 1), 0, state.config.height - 1);
+    }
+
+    // Поиск жертвы (инфекция)
+    for (let j = 0; j < state.organisms.length; j++) {
+      const org = state.organisms[j];
+      if (org.x === v.x && org.y === v.y) {
+        // Инфекция: встраиваем вирусный код
+        const newGenome = new Uint8Array(org.genome.length + 1);
+        const pos = org.ip % org.genome.length;
+        newGenome.set(org.genome.subarray(0, pos));
+        newGenome[pos] = 10; // Инструкция репликации
+        newGenome.set(org.genome.subarray(pos), pos + 1);
+        org.genome = newGenome;
+        org.size = newGenome.length;
+        if (state.rng() < 0.02) addEvent(state, "virus", `Заражение: ${org.family}`);
+        state.viruses.splice(i, 1);
+        break;
+      }
+    }
+  }
 }
 
 function enforceMemory(state) {
@@ -704,6 +762,7 @@ export function stepWorld(state, ticks = 1) {
     state.organisms = state.organisms.filter((x) => x.alive);
 
     updatePheromones(state);
+    updateViruses(state, occupied);
     applySystemEvents(state);
     enforceMemory(state);
 
@@ -819,5 +878,6 @@ export function makeSnapshot(state, options = {}) {
     baseResource: Array.from(state.baseResource),
     pheromones: Array.from(state.pheromones),
     worldLog: state.worldLog,
+    viruses: state.viruses.map(v => ({ x: v.x, y: v.y })),
   };
 }

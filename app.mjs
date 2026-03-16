@@ -129,6 +129,17 @@ function drawArena(snapshot, ctx, canvas, options = {}) {
     }
   }
 
+  // Отрисовка вирусов
+  if (snapshot.viruses) {
+    ctx.fillStyle = "#ffffff";
+    for (let i = 0; i < snapshot.viruses.length; i++) {
+      const v = snapshot.viruses[i];
+      ctx.beginPath();
+      ctx.arc(v.x * cell + cell/2, v.y * cell + cell/2, cell/3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   for (let i = 0; i < snapshot.organisms.length; i += 1) {
     const o = snapshot.organisms[i];
     ctx.fillStyle = hsl(o.colorHash, o.energy, o.mode);
