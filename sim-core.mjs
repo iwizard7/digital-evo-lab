@@ -420,6 +420,24 @@ function updatePheromones(state) {
   state.pheromones = next;
 }
 
+function moveTowards(state, org, tx, ty, map, occupied) {
+  const dx = Math.sign(tx - org.x);
+  const dy = Math.sign(ty - org.y);
+  if (dx === 0 && dy === 0) return;
+  const nx = clamp(org.x + dx, 0, state.config.width - 1);
+  const ny = clamp(org.y + dy, 0, state.config.height - 1);
+  const old = mapKey(state, org.x, org.y);
+  const next = mapKey(state, nx, ny);
+  if (!occupied.has(next) || next === old) {
+    occupied.delete(old);
+    map.delete(old);
+    org.x = nx;
+    org.y = ny;
+    occupied.add(next);
+    map.set(next, org);
+  }
+}
+
 function executeOpcode(state, org, map, occupied) {
   const code = org.genome[org.ip % org.genome.length] % 12; // Увеличиваем диапазон опкодов
   org.ip = (org.ip + 1) % org.genome.length;
@@ -521,6 +539,73 @@ function executeOpcode(state, org, map, occupied) {
     const idx = mapKey(state, org.x, org.y);
     state.pheromones[idx] = Math.min(10, state.pheromones[idx] + 2.5);
     org.energy -= 0.15;
+  } else if (code === 8) {
+    // Дальний поиск ресурсов (Resource Vision)
+    let bestX = org.x;
+    let bestY = org.y;
+    let bestVal = -1;
+    const radius = 5;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const nx = clamp(org.x + dx, 0, state.config.width - 1);
+        const ny = clamp(org.y + dy, 0, state.config.height - 1);
+        const val = state.baseResource[mapKey(state, nx, ny)];
+        if (val > bestVal) {
+          bestVal = val;
+          bestX = nx;
+          bestY = ny;
+        }
+      }
+    }
+    moveTowards(state, org, bestX, bestY, map, occupied);
+    org.energy -= 0.05; // Тратим энергию на работу зрения
+  } else if (code === 9) {
+    // Детектор угроз (Threat Scanner)
+    let fearX = 0;
+    let fearY = 0;
+    let threats = 0;
+    const radius = 4;
+    for (let i = 0; i < state.organisms.length; i++) {
+        const other = state.organisms[i];
+        if (other === org) continue;
+        const dx = other.x - org.x;
+        const dy = other.y - org.y;
+        if (Math.abs(dx) <= radius && Math.abs(dy) <= radius) {
+            if (other.aggression > 0.6 || other.mode === "parasite") {
+                fearX -= dx;
+                fearY -= dy;
+                threats++;
+            }
+        }
+    }
+    if (threats > 0) {
+        const targetX = clamp(org.x + Math.sign(fearX), 0, state.config.width - 1);
+        const targetY = clamp(org.y + Math.sign(fearY), 0, state.config.height - 1);
+        moveTowards(state, org, targetX, targetY, map, occupied);
+    }
+    org.energy -= 0.08;
+  } else if (code === 11) {
+    // Кооперативный радар (Social Radar)
+    let socX = 0;
+    let socY = 0;
+    let friends = 0;
+    const radius = 6;
+    for (let i = 0; i < state.organisms.length; i++) {
+        const other = state.organisms[i];
+        if (other === org || other.family !== org.family) continue;
+        const dx = other.x - org.x;
+        const dy = other.y - org.y;
+        if (Math.abs(dx) <= radius && Math.abs(dy) <= radius) {
+            socX += dx;
+            socY += dy;
+            friends++;
+        }
+    }
+    if (friends > 0) {
+        const targetX = clamp(org.x + Math.sign(socX), 0, state.config.width - 1);
+        const targetY = clamp(org.y + Math.sign(socY), 0, state.config.height - 1);
+        moveTowards(state, org, targetX, targetY, map, occupied);
+    }
   } else if (code === 10) {
     // Вирусная репликация (Viral Replication)
     if (org.energy > 8) {
@@ -608,14 +693,14 @@ function applySystemEvents(state) {
     addEvent(state, "extinct", `Вымирание: -${lost}`);
   }
 
-  if (state.rng() < 0.0018) { // Спонтанный вирус
+  if (state.rng() < 0.005) { // Увеличили шанс до 0.5% (было 0.18%)
     state.viruses.push({
       x: ri(state.rng, 0, state.config.width - 1),
       y: ri(state.rng, 0, state.config.height - 1),
       genome: new Uint8Array([10, 0, 0]),
-      life: 250
+      life: 800 // Увеличили время жизни до 800 тиков (было 250)
     });
-    addEvent(state, "virus", "Обнаружена вирусная аномалия");
+    addEvent(state, "virus", "В мир проник новый вирус");
   }
 
   if (state.mutationBoost > 0) state.mutationBoost = Math.max(0, state.mutationBoost - 0.0005);
@@ -636,23 +721,26 @@ function updateViruses(state, occupied) {
       v.y = clamp(v.y + ri(state.rng, -1, 1), 0, state.config.height - 1);
     }
 
-    // Поиск жертвы (инфекция)
+    // Поиск жертвы (инфекция) - теперь в радиусе 1 клетки
+    let infected = false;
     for (let j = 0; j < state.organisms.length; j++) {
       const org = state.organisms[j];
-      if (org.x === v.x && org.y === v.y) {
+      if (Math.abs(org.x - v.x) <= 1 && Math.abs(org.y - v.y) <= 1) {
         // Инфекция: встраиваем вирусный код
         const newGenome = new Uint8Array(org.genome.length + 1);
-        const pos = org.ip % org.genome.length;
+        const pos = ri(state.rng, 0, org.genome.length - 1); // Случайное место в геноме
         newGenome.set(org.genome.subarray(0, pos));
         newGenome[pos] = 10; // Инструкция репликации
         newGenome.set(org.genome.subarray(pos), pos + 1);
         org.genome = newGenome;
         org.size = newGenome.length;
-        if (state.rng() < 0.02) addEvent(state, "virus", `Заражение: ${org.family}`);
+        if (state.rng() < 0.05) addEvent(state, "virus", `Заражение: ${org.family}`);
         state.viruses.splice(i, 1);
+        infected = true;
         break;
       }
     }
+    if (infected) continue;
   }
 }
 

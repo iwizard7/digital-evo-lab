@@ -132,11 +132,15 @@ function drawArena(snapshot, ctx, canvas, options = {}) {
   // Отрисовка вирусов
   if (snapshot.viruses) {
     ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#ff0000";
+    ctx.lineWidth = 1;
     for (let i = 0; i < snapshot.viruses.length; i++) {
       const v = snapshot.viruses[i];
       ctx.beginPath();
-      ctx.arc(v.x * cell + cell/2, v.y * cell + cell/2, cell/3, 0, Math.PI * 2);
+      // Вирусы стали чуть крупнее и с обводкой
+      ctx.arc(v.x * cell + cell / 2, v.y * cell + cell / 2, cell / 2, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
     }
   }
 
@@ -312,17 +316,38 @@ function renderEvents(snapshot) {
 
 function renderWorldLog(snapshot) {
   const logNode = document.getElementById("worldLog");
-  if (!logNode || !snapshot.worldLog) return;
-  logNode.innerHTML = snapshot.worldLog
-    .map(
-      (entry) => `
-    <div class="log-entry">
-      <div class="log-title">Эра ${entry.name}</div>
-      <div class="log-details">Длительность: ${entry.duration} тиков | Пик: ${entry.peak}</div>
-    </div>
-  `
-    )
-    .join("");
+  if (!logNode) return;
+
+  const currentDom = snapshot.topFamilies?.[0];
+  let html = "";
+
+  // Сначала показываем текущую империю
+  if (currentDom) {
+    html += `
+      <div class="log-entry active">
+        <div class="log-title">Текущая эра: ${currentDom[0]}</div>
+        <div class="log-details">Правление в разгаре | Мощь: ${currentDom[1]}</div>
+      </div>
+    `;
+  }
+
+  // Затем список павших империй
+  if (snapshot.worldLog && snapshot.worldLog.length > 0) {
+    html += snapshot.worldLog
+      .map(
+        (entry) => `
+      <div class="log-entry">
+        <div class="log-title">Эра ${entry.name}</div>
+        <div class="log-details">Закат на тике ${entry.endTick} | Пик мощи: ${entry.peak}</div>
+      </div>
+    `
+      )
+      .join("");
+  } else if (!currentDom) {
+    html = '<div class="tiny">История пока не написана...</div>';
+  }
+
+  logNode.innerHTML = html;
 }
 
 function pushReplay(snapshot) {

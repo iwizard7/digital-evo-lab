@@ -259,6 +259,16 @@ select {
   border-radius: 4px;
 }
 
+.log-entry.active {
+  background: rgba(125, 246, 255, 0.12);
+  border-left-color: var(--coop);
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  50% { border-left-color: #ffffff; }
+}
+
 .log-title {
   font-weight: 800;
   font-size: 0.8rem;
