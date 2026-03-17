@@ -54,6 +54,7 @@ const DEFAULT_CONFIG = {
   instructionsPerTick: 3,
   hgtChance: 0.02,
   historySize: 300,
+  resourceRegen: 0.012,
 };
 
 export function mergeConfig(base = {}, presetName = "balanced", custom = {}) {
@@ -308,6 +309,7 @@ export function createWorld(config = {}, seed = Date.now()) {
     memoryLimit: Math.floor(cfg.width * cfg.height * cfg.memoryMultiplier),
     pheromones: new Float32Array(cfg.width * cfg.height),
     viruses: [],
+    activeEvents: [], // Метеориты, эпидемии, засухи
     ...makeBiomeMap(cfg, rng),
   };
   placeInitialPopulation(state);
@@ -625,7 +627,11 @@ function executeOpcode(state, org, map, occupied) {
 
 function reproduce(state, org, occupied) {
   if (org.energy < 24) return;
-  if (state.rng() > 0.025 + org.fertility * 0.05) return;
+  
+  let fertilityMod = 1.0;
+  for (const ev of state.activeEvents) if (ev.type === "epidemic") fertilityMod = 0.4;
+  
+  if (state.rng() > (0.025 + org.fertility * 0.05) * fertilityMod) return;
   if (state.organisms.length > state.config.maxPopulationHint) return;
 
   const dirs = [
@@ -678,19 +684,50 @@ function applySystemEvents(state) {
     addEvent(state, "coop", `Кооперативный сигнал в ${target.family}`);
   }
 
-  if (state.organisms.length > 25 && state.rng() < state.config.catastropheChance) {
-    const kill = 0.22 + state.rng() * 0.42;
-    let lost = 0;
-    const survivors = [];
-    for (let i = 0; i < state.organisms.length; i += 1) {
-      if (state.rng() > kill) survivors.push(state.organisms[i]);
-      else {
-        state.deathCauses.catastrophe += 1;
-        lost += 1;
+  // Обновление и очистка завершенных событий
+  state.activeEvents = state.activeEvents.filter(ev => {
+    ev.duration--;
+    return ev.duration > 0;
+  });
+
+  // Шанс запуска нового катаклизма
+  if (state.rng() < 0.0015 && state.activeEvents.length < 2) {
+    const r = state.rng();
+    if (r < 0.3) {
+      // Метеоритный удар
+      const tx = ri(state.rng, 0, state.config.width - 1);
+      const ty = ri(state.rng, 0, state.config.height - 1);
+      const radius = 6 + state.rng() * 8;
+      let killed = 0;
+      state.organisms = state.organisms.filter(o => {
+        const d = Math.sqrt((o.x - tx)**2 + (o.y - ty)**2);
+        if (d < radius) {
+          state.deathCauses.catastrophe++;
+          killed++;
+          return false;
+        }
+        return true;
+      });
+      // Обогащение почвы в месте удара
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = clamp(tx + dx, 0, state.config.width - 1);
+          const ny = clamp(ty + dy, 0, state.config.height - 1);
+          if (Math.sqrt(dx*dx + dy*dy) < radius) {
+            state.baseResource[mapKey(state, nx, ny)] += 15.0;
+          }
+        }
       }
+      addEvent(state, "extinct", `Метеорит! -${killed} особей, почва обогащена`);
+    } else if (r < 0.6) {
+      // Эпидемия
+      state.activeEvents.push({ type: "epidemic", duration: 800 });
+      addEvent(state, "virus", "Началась глобальная эпидемия: слабость и бесплодие");
+    } else {
+      // Засуха
+      state.activeEvents.push({ type: "drought", duration: 1200 });
+      addEvent(state, "system", "Великая засуха: ресурсы почти не восполняются");
     }
-    state.organisms = survivors;
-    addEvent(state, "extinct", `Вымирание: -${lost}`);
   }
 
   if (state.rng() < 0.005) { // Увеличили шанс до 0.5% (было 0.18%)
@@ -813,6 +850,17 @@ export function stepWorld(state, ticks = 1) {
   for (let t = 0; t < ticks; t += 1) {
     state.tick += 1;
 
+    // Регенерация ресурсов
+    const sf = seasonFactor(state);
+    let globalMod = 1.0;
+    for (const ev of state.activeEvents) {
+      if (ev.type === "drought") globalMod *= 0.35;
+    }
+    const rate = state.config.resourceRegen * sf * globalMod;
+    for (let i = 0; i < state.baseResource.length; i++) {
+        state.baseResource[i] = Math.min(1.0, state.baseResource[i] + rate);
+    }
+
     const map = new Map();
     for (let i = 0; i < state.organisms.length; i += 1) {
       const o = state.organisms[i];
@@ -826,7 +874,10 @@ export function stepWorld(state, ticks = 1) {
 
       org.age += 1;
       const idx = mapKey(state, org.x, org.y);
-      org.energy -= org.metabolism * (1.03 / biomePenalty(state.biomes[idx]));
+      let epidemicMod = 1.0;
+      for (const ev of state.activeEvents) if (ev.type === "epidemic") epidemicMod = 1.45;
+
+      org.energy -= org.metabolism * (1.03 / biomePenalty(state.biomes[idx])) * epidemicMod;
 
       for (let k = 0; k < state.config.instructionsPerTick; k += 1) {
         executeOpcode(state, org, map, occupied);
@@ -897,6 +948,7 @@ export function exportState(state) {
     speciesEdges: state.speciesEdges,
     eventWindow: state.eventWindow,
     worldLog: state.worldLog,
+    activeEvents: state.activeEvents,
   };
 }
 
@@ -917,6 +969,7 @@ export function importState(payload) {
   state.speciesEdges = payload.speciesEdges || [];
   state.eventWindow = payload.eventWindow || [];
   state.worldLog = payload.worldLog || [];
+  state.activeEvents = payload.activeEvents || [];
   return state;
 }
 
