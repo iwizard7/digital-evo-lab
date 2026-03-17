@@ -351,10 +351,13 @@ function renderWorldLog(snapshot) {
 }
 
 function pushReplay(snapshot) {
+  const wasAtEnd = Math.abs(Number(replaySlider.value) - Number(replaySlider.max)) < 0.1;
   replayFrames.push(snapshot);
-  if (replayFrames.length > 240) replayFrames.shift();
+  if (replayFrames.length > 300) replayFrames.shift();
   replaySlider.max = String(Math.max(0, replayFrames.length - 1));
-  replaySlider.value = replaySlider.max;
+  if (wasAtEnd && !replayMode) {
+    replaySlider.value = replaySlider.max;
+  }
 }
 
 function renderSnapshot(snapshot) {
@@ -395,10 +398,11 @@ function onDuelMessage(event) {
   if (type !== "snapshot") return;
   drawArena(snapshot, duelCtx, duelCanvas, { disableHeatmap: true });
 
-  const mainPop = replayFrames.length ? replayFrames[replayFrames.length - 1].population : 0;
+  const mainSnap = replayFrames[replayFrames.length - 1];
+  const mainPop = mainSnap ? mainSnap.population : 0;
   const duelPop = snapshot.population || 0;
-  const winner = mainPop === duelPop ? "ничья" : mainPop > duelPop ? "основной мир" : "дуэльный мир";
-  duelStatus.textContent = `основной: ${mainPop}, дуэльный: ${duelPop}, лидер: ${winner}`;
+  const winner = mainPop === duelPop ? "равенство" : mainPop > duelPop ? "основной мир" : "дуэльный мир";
+  duelStatus.textContent = `основной: ${mainPop}, дуэльный: ${duelPop} | лидирует: ${winner}`;
 }
 
 function bindControls() {
@@ -457,6 +461,11 @@ function bindControls() {
   resetWorldBtn.addEventListener("click", () => {
     replayFrames = [];
     replayMode = false;
+    if (duelWorld) {
+      duelWorld.terminate();
+      duelWorld = null;
+      duelStatus.textContent = "дуэль прервана";
+    }
     world.postMessage({
       type: "reset",
       payload: {

@@ -265,9 +265,13 @@ function addEvent(state, type, text) {
 }
 
 function totalMemory(state) {
+  return state.totalMemoryUsage || 0;
+}
+
+function updateStateMemory(state) {
   let sum = 0;
   for (let i = 0; i < state.organisms.length; i += 1) sum += state.organisms[i].size;
-  return sum;
+  state.totalMemoryUsage = sum;
 }
 
 function placeInitialPopulation(state) {
@@ -310,9 +314,11 @@ export function createWorld(config = {}, seed = Date.now()) {
     pheromones: new Float32Array(cfg.width * cfg.height),
     viruses: [],
     activeEvents: [], // Метеориты, эпидемии, засухи
+    totalMemoryUsage: 0,
     ...makeBiomeMap(cfg, rng),
   };
   placeInitialPopulation(state);
+  updateStateMemory(state);
   collectHistory(state);
   return state;
 }
@@ -354,13 +360,20 @@ function applyHGT(state, org, other) {
     k += 1;
   }
 
+  const oldSize = org.size;
   org.genome = a;
   org.size = a.length;
+  state.totalMemoryUsage += (org.size - oldSize);
   org.species = speciesFromGenome(a);
-  org.family = familyFromHash(hashGenome(a));
   org.metabolism = 0.5 + (a[0] / 255) * 1.35;
   org.fertility = 0.22 + (a[1] / 255) * 1.2;
   org.aggression = a[2] / 255;
+  org.family = familyFromHash(hashGenome(a), {
+    aggression: org.aggression,
+    metabolism: org.metabolism,
+    fertility: org.fertility,
+    mode: org.mode,
+  });
   if (state.rng() < 0.02) addEvent(state, "hgt", `Горизонтальный перенос: ${other.family} -> ${org.family}`);
 }
 
@@ -530,10 +543,20 @@ function executeOpcode(state, org, map, occupied) {
   } else if (code === 6) {
     if (state.rng() < 0.04) {
       const out = mutateGenome(state, org.genome, true);
+      const oldSize = org.size;
       org.genome = out.genome;
       org.size = out.genome.length;
+      state.totalMemoryUsage += (org.size - oldSize);
       org.species = speciesFromGenome(org.genome);
-      org.family = familyFromHash(hashGenome(org.genome));
+      org.metabolism = 0.5 + (org.genome[0] / 255) * 1.35;
+      org.fertility = 0.22 + (org.genome[1] / 255) * 1.2;
+      org.aggression = org.genome[2] / 255;
+      org.family = familyFromHash(hashGenome(org.genome), {
+        aggression: org.aggression,
+        metabolism: org.metabolism,
+        fertility: org.fertility,
+        mode: org.mode,
+      });
       if (out.mutated && state.rng() < 0.02) addEvent(state, "mutation", `Самомутация в ${org.family}`);
     }
   } else if (code === 7) {
@@ -562,51 +585,45 @@ function executeOpcode(state, org, map, occupied) {
     moveTowards(state, org, bestX, bestY, map, occupied);
     org.energy -= 0.05; // Тратим энергию на работу зрения
   } else if (code === 9) {
-    // Детектор угроз (Threat Scanner)
+    // Детектор угроз (Threat Scanner) - ОПТИМИЗИРОВАНО
     let fearX = 0;
     let fearY = 0;
     let threats = 0;
     const radius = 4;
-    for (let i = 0; i < state.organisms.length; i++) {
-        const other = state.organisms[i];
-        if (other === org) continue;
-        const dx = other.x - org.x;
-        const dy = other.y - org.y;
-        if (Math.abs(dx) <= radius && Math.abs(dy) <= radius) {
-            if (other.aggression > 0.6 || other.mode === "parasite") {
-                fearX -= dx;
-                fearY -= dy;
-                threats++;
-            }
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const other = map.get(mapKey(state, clamp(org.x + dx, 0, state.config.width - 1), clamp(org.y + dy, 0, state.config.height - 1)));
+        if (other && (other.aggression > 0.6 || other.mode === "parasite") && other.family !== org.family) {
+          fearX -= dx;
+          fearY -= dy;
+          threats++;
         }
+      }
     }
     if (threats > 0) {
-        const targetX = clamp(org.x + Math.sign(fearX), 0, state.config.width - 1);
-        const targetY = clamp(org.y + Math.sign(fearY), 0, state.config.height - 1);
-        moveTowards(state, org, targetX, targetY, map, occupied);
+      moveTowards(state, org, clamp(org.x + Math.sign(fearX), 0, state.config.width - 1), clamp(org.y + Math.sign(fearY), 0, state.config.height - 1), map, occupied);
     }
     org.energy -= 0.08;
   } else if (code === 11) {
-    // Кооперативный радар (Social Radar)
+    // Кооперативный радар (Social Radar) - ОПТИМИЗИРОВАНО
     let socX = 0;
     let socY = 0;
     let friends = 0;
     const radius = 6;
-    for (let i = 0; i < state.organisms.length; i++) {
-        const other = state.organisms[i];
-        if (other === org || other.family !== org.family) continue;
-        const dx = other.x - org.x;
-        const dy = other.y - org.y;
-        if (Math.abs(dx) <= radius && Math.abs(dy) <= radius) {
-            socX += dx;
-            socY += dy;
-            friends++;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const other = map.get(mapKey(state, clamp(org.x + dx, 0, state.config.width - 1), clamp(org.y + dy, 0, state.config.height - 1)));
+        if (other && other.family === org.family) {
+          socX += dx;
+          socY += dy;
+          friends++;
         }
+      }
     }
     if (friends > 0) {
-        const targetX = clamp(org.x + Math.sign(socX), 0, state.config.width - 1);
-        const targetY = clamp(org.y + Math.sign(socY), 0, state.config.height - 1);
-        moveTowards(state, org, targetX, targetY, map, occupied);
+      moveTowards(state, org, clamp(org.x + Math.sign(socX), 0, state.config.width - 1), clamp(org.y + Math.sign(socY), 0, state.config.height - 1), map, occupied);
     }
   } else if (code === 10) {
     // Вирусная репликация (Viral Replication)
@@ -660,11 +677,13 @@ function reproduce(state, org, occupied) {
       : org.mode;
     const child = makeOrganism(state, nx, ny, out.genome, org, childMode);
 
-    if (totalMemory(state) + child.size > state.memoryLimit) return;
+    if (state.totalMemoryUsage + child.size > state.memoryLimit) return;
 
     org.energy = Math.max(8, org.energy * 0.56);
     state.organisms.push(child);
+    state.totalMemoryUsage += child.size;
     occupied.add(key);
+    map.set(key, child); // Добавляем в локальную карту для текущего тика
     if (out.mutated && state.rng() < 0.03) addEvent(state, "mutation", `Новый вариант: ${child.species}`);
     return;
   }
@@ -743,7 +762,7 @@ function applySystemEvents(state) {
   if (state.mutationBoost > 0) state.mutationBoost = Math.max(0, state.mutationBoost - 0.0005);
 }
 
-function updateViruses(state, occupied) {
+function updateViruses(state, map, occupied) {
   for (let i = state.viruses.length - 1; i >= 0; i--) {
     const v = state.viruses[i];
     v.life--;
@@ -758,24 +777,31 @@ function updateViruses(state, occupied) {
       v.y = clamp(v.y + ri(state.rng, -1, 1), 0, state.config.height - 1);
     }
 
-    // Поиск жертвы (инфекция) - теперь в радиусе 1 клетки
+    // Поиск жертвы (инфекция) - ОПТИМИЗИРОВАНО O(1)
     let infected = false;
-    for (let j = 0; j < state.organisms.length; j++) {
-      const org = state.organisms[j];
-      if (Math.abs(org.x - v.x) <= 1 && Math.abs(org.y - v.y) <= 1) {
-        // Инфекция: встраиваем вирусный код
-        const newGenome = new Uint8Array(org.genome.length + 1);
-        const pos = ri(state.rng, 0, org.genome.length - 1); // Случайное место в геноме
-        newGenome.set(org.genome.subarray(0, pos));
-        newGenome[pos] = 10; // Инструкция репликации
-        newGenome.set(org.genome.subarray(pos), pos + 1);
-        org.genome = newGenome;
-        org.size = newGenome.length;
-        if (state.rng() < 0.05) addEvent(state, "virus", `Заражение: ${org.family}`);
-        state.viruses.splice(i, 1);
-        infected = true;
-        break;
+    const r = 1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const targetIdx = mapKey(state, clamp(v.x + dx, 0, state.config.width - 1), clamp(v.y + dy, 0, state.config.height - 1));
+        const org = map.get(targetIdx);
+        if (org && org.alive) {
+          // Инфекция: встраиваем вирусный код
+          const newGenome = new Uint8Array(org.genome.length + 1);
+          const pos = ri(state.rng, 0, org.genome.length - 1);
+          newGenome.set(org.genome.subarray(0, pos));
+          newGenome[pos] = 10;
+          newGenome.set(org.genome.subarray(pos), pos + 1);
+          
+          state.totalMemoryUsage += 1;
+          org.genome = newGenome;
+          org.size = newGenome.length;
+          if (state.rng() < 0.05) addEvent(state, "virus", `Заражение: ${org.family}`);
+          state.viruses.splice(i, 1);
+          infected = true;
+          break;
+        }
       }
+      if (infected) break;
     }
     if (infected) continue;
   }
@@ -899,15 +925,17 @@ export function stepWorld(state, ticks = 1) {
     }
 
     state.organisms = state.organisms.filter((x) => x.alive);
+    updateStateMemory(state);
 
     updatePheromones(state);
-    updateViruses(state, occupied);
+    updateViruses(state, map, occupied);
     applySystemEvents(state);
     enforceMemory(state);
 
     if (state.organisms.length === 0) {
       addEvent(state, "extinct", "Полное вымирание, регенерация мира");
       placeInitialPopulation(state);
+      updateStateMemory(state);
     }
 
     collectHistory(state);
